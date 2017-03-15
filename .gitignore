@@ -1,0 +1,8 @@
+*.log
+.vscode
+.cache
+__pycache__
+incoming
+outgoing
+staging
+
