@@ -19,17 +19,23 @@ class ThumbnailMakerService(object):
         self.output_dir = self.home_dir + os.path.sep + 'outgoing'
         self.dl_lock = threading.Lock()
         self.downloaded_bytes = 0
+        max_concurrent_dl = 4
+        self.dl_sem = threading.Semaphore(max_concurrent_dl)
 
     def download_image(self, url):
         # download each image and save to the input dir
-        logging.info("downloading image at URL: " + url)
-        img_filename = urlparse(url).path.split('/')[-1]
-        dest_path = self.input_dir + os.path.sep + img_filename
-        urlretrieve(url, dest_path)
-        img_size = os.path.getsize(dest_path)
-        with self.dl_lock:
-            self.downloaded_bytes += img_size
-        logging.info("image [{} bytes] saved to: {}".format(img_size, dest_path))
+        self.dl_sem.acquire()
+        try:
+            logging.info("downloading image at URL: " + url)
+            img_filename = urlparse(url).path.split('/')[-1]
+            dest_path = self.input_dir + os.path.sep + img_filename
+            urlretrieve(url, dest_path)
+            img_size = os.path.getsize(dest_path)
+            with self.dl_lock:
+                self.downloaded_bytes += img_size
+            logging.info("image [{} bytes] saved to: {}".format(img_size, dest_path))
+        finally:
+            self.dl_sem.release()
 
     def download_images(self, img_url_list):
         # validate inputs
