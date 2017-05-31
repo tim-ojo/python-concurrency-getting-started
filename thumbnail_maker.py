@@ -19,6 +19,20 @@ class ThumbnailMakerService(object):
         self.input_dir = self.home_dir + os.path.sep + 'incoming'
         self.output_dir = self.home_dir + os.path.sep + 'outgoing'
         self.img_queue = Queue()
+        self.dl_queue = Queue()
+
+    def download_image(self):
+        while not self.dl_queue.empty():
+            try:
+                url = self.dl_queue.get(block=False)
+                # download each image and save to the input dir
+                img_filename = urlparse(url).path.split('/')[-1]
+                urlretrieve(url, self.input_dir + os.path.sep + img_filename)
+                self.img_queue.put(img_filename)
+
+                self.dl_queue.task_done()
+            except Queue.Empty:
+                logging.info('Queue empty')
 
     def download_images(self, img_url_list):
         # validate inputs
@@ -36,7 +50,7 @@ class ThumbnailMakerService(object):
             self.img_queue.put(img_filename)
         end = time.perf_counter()
 
-        self.img_queue.put('')
+        self.img_queue.put(None)
         logging.info("downloaded {} images in {} seconds".format(len(img_url_list), end - start))
 
     def perform_resizing(self):
@@ -81,12 +95,24 @@ class ThumbnailMakerService(object):
 
         start = time.perf_counter()
 
-        t1 = Thread(target=self.download_images, args=([img_url_list]))
-        t2 = Thread(target=self.perform_resizing)
+        for img_url in img_url_list:
+            self.dl_queue.put(img_url)
+
+        t1 = Thread(target=self.download_image)
+        t2 = Thread(target=self.download_image)
+        t3 = Thread(target=self.download_image)
+        t4 = Thread(target=self.download_image)
         t1.start()
         t2.start()
-        t1.join()
-        t2.join()
+        t3.start()
+        t4.start()
+
+        t5 = Thread(target=self.perform_resizing)
+        t5.start()
+
+        self.dl_queue.join()
+        self.img_queue.put(None)
+        t5.join()
 
         end = time.perf_counter()
         logging.info("END make_thumbnails in {} seconds".format(end - start))
