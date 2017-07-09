@@ -98,21 +98,17 @@ class ThumbnailMakerService(object):
         for img_url in img_url_list:
             self.dl_queue.put(img_url)
 
-        t1 = Thread(target=self.download_image)
-        t2 = Thread(target=self.download_image)
-        t3 = Thread(target=self.download_image)
-        t4 = Thread(target=self.download_image)
-        t1.start()
-        t2.start()
-        t3.start()
-        t4.start()
+        num_dl_threads = 4
+        for _ in range(num_dl_threads):
+            t = Thread(target=self.download_image)
+            t.start()
 
-        t5 = Thread(target=self.perform_resizing)
-        t5.start()
+        t2 = Thread(target=self.perform_resizing)
+        t2.start()
 
         self.dl_queue.join()
         self.img_queue.put(None)
-        t5.join()
+        t2.join()
 
         end = time.perf_counter()
         logging.info("END make_thumbnails in {} seconds".format(end - start))
