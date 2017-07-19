@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from urllib.request import urlretrieve
 from queue import Queue
 from threading import Thread
+import multiprocessing
 
 import PIL
 from PIL import Image
@@ -18,7 +19,7 @@ class ThumbnailMakerService(object):
         self.home_dir = home_dir
         self.input_dir = self.home_dir + os.path.sep + 'incoming'
         self.output_dir = self.home_dir + os.path.sep + 'outgoing'
-        self.img_queue = Queue()
+        self.img_queue = multiprocessing.JoinableQueue()
         self.dl_queue = Queue()
 
     def download_image(self):
@@ -59,9 +60,7 @@ class ThumbnailMakerService(object):
 
         logging.info("beginning image resizing")
         target_sizes = [32, 64, 200]
-        num_images = len(os.listdir(self.input_dir))
 
-        start = time.perf_counter()
         while True:
             filename = self.img_queue.get()
             if filename:
@@ -86,9 +85,6 @@ class ThumbnailMakerService(object):
             else:
                 self.img_queue.task_done()
                 break
-        end = time.perf_counter()
-
-        logging.info("created {} thumbnails in {} seconds".format(num_images, end - start))
 
     def make_thumbnails(self, img_url_list):
         logging.info("START make_thumbnails")
@@ -103,12 +99,14 @@ class ThumbnailMakerService(object):
             t = Thread(target=self.download_image)
             t.start()
 
-        t2 = Thread(target=self.perform_resizing)
-        t2.start()
+        num_processes = multiprocessing.cpu_count()
+        for _ in range(num_processes):
+            p = multiprocessing.Process(target=self.perform_resizing)
+            p.start()
 
         self.dl_queue.join()
-        self.img_queue.put(None)
-        t2.join()
+        for _ in range(num_processes):
+            self.img_queue.put(None)
 
         end = time.perf_counter()
         logging.info("END make_thumbnails in {} seconds".format(end - start))
