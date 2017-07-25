@@ -5,7 +5,7 @@ import logging
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
 from queue import Queue
-from threading import Thread
+from threading import Thread, Lock
 import multiprocessing
 
 import PIL
@@ -21,6 +21,9 @@ class ThumbnailMakerService(object):
         self.output_dir = self.home_dir + os.path.sep + 'outgoing'
         self.img_queue = multiprocessing.JoinableQueue()
         self.dl_queue = Queue()
+        self.dl_size = 0
+        self.dl_size_lock = Lock()
+        self.resized_size = multiprocessing.Value('i', 0)
 
     def download_image(self):
         while not self.dl_queue.empty():
@@ -28,7 +31,11 @@ class ThumbnailMakerService(object):
                 url = self.dl_queue.get(block=False)
                 # download each image and save to the input dir
                 img_filename = urlparse(url).path.split('/')[-1]
-                urlretrieve(url, self.input_dir + os.path.sep + img_filename)
+                img_filepath = self.input_dir + os.path.sep + img_filename
+                urlretrieve(url, img_filepath)
+                with self.dl_size_lock:
+                    self.dl_size += os.path.getsize(img_filepath)
+
                 self.img_queue.put(img_filename)
 
                 self.dl_queue.task_done()
@@ -77,7 +84,11 @@ class ThumbnailMakerService(object):
                     # save the resized image to the output dir with a modified file name
                     new_filename = os.path.splitext(filename)[0] + \
                         '_' + str(basewidth) + os.path.splitext(filename)[1]
-                    img.save(self.output_dir + os.path.sep + new_filename)
+                    out_filepath = self.output_dir + os.path.sep + new_filename
+                    img.save(out_filepath)
+
+                    with self.resized_size.get_lock():
+                        self.resized_size.value += os.path.getsize(out_filepath)
 
                 os.remove(self.input_dir + os.path.sep + filename)
                 logging.info("done resizing image {}".format(filename))
@@ -110,3 +121,4 @@ class ThumbnailMakerService(object):
 
         end = time.perf_counter()
         logging.info("END make_thumbnails in {} seconds".format(end - start))
+        logging.info("Initial size of downloads: [{}]  Final size of images: [{}]".format(self.dl_size, self.resized_size.value))
