@@ -20,25 +20,23 @@ class ThumbnailMakerService(object):
         self.input_dir = self.home_dir + os.path.sep + 'incoming'
         self.output_dir = self.home_dir + os.path.sep + 'outgoing'
         self.img_queue = multiprocessing.JoinableQueue()
-        self.dl_queue = Queue()
         self.dl_size = 0
-        self.dl_size_lock = Lock()
         self.resized_size = multiprocessing.Value('i', 0)
 
-    def download_image(self):
-        while not self.dl_queue.empty():
+    def download_image(self, dl_queue, dl_size_lock):
+        while not dl_queue.empty():
             try:
-                url = self.dl_queue.get(block=False)
+                url = dl_queue.get(block=False)
                 # download each image and save to the input dir
                 img_filename = urlparse(url).path.split('/')[-1]
                 img_filepath = self.input_dir + os.path.sep + img_filename
                 urlretrieve(url, img_filepath)
-                with self.dl_size_lock:
+                with dl_size_lock:
                     self.dl_size += os.path.getsize(img_filepath)
 
                 self.img_queue.put(img_filename)
 
-                self.dl_queue.task_done()
+                dl_queue.task_done()
             except Queue.Empty:
                 logging.info('Queue empty')
 
@@ -99,15 +97,17 @@ class ThumbnailMakerService(object):
 
     def make_thumbnails(self, img_url_list):
         logging.info("START make_thumbnails")
-
         start = time.perf_counter()
 
+        dl_queue = Queue()
+        dl_size_lock = Lock()
+
         for img_url in img_url_list:
-            self.dl_queue.put(img_url)
+            dl_queue.put(img_url)
 
         num_dl_threads = 4
         for _ in range(num_dl_threads):
-            t = Thread(target=self.download_image)
+            t = Thread(target=self.download_image, args=(dl_queue, dl_size_lock))
             t.start()
 
         num_processes = multiprocessing.cpu_count()
@@ -115,7 +115,7 @@ class ThumbnailMakerService(object):
             p = multiprocessing.Process(target=self.perform_resizing)
             p.start()
 
-        self.dl_queue.join()
+        dl_queue.join()
         for _ in range(num_processes):
             self.img_queue.put(None)
 
