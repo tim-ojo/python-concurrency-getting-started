@@ -7,6 +7,9 @@ from urllib.request import urlretrieve
 from queue import Queue
 from threading import Thread, Lock
 import multiprocessing
+import asyncio
+import aiohttp
+import aiofiles
 
 import PIL
 from PIL import Image
@@ -23,22 +26,22 @@ class ThumbnailMakerService(object):
         self.dl_size = 0
         self.resized_size = multiprocessing.Value('i', 0)
 
-    def download_image(self, dl_queue, dl_size_lock):
-        while not dl_queue.empty():
-            try:
-                url = dl_queue.get(block=False)
-                # download each image and save to the input dir
-                img_filename = urlparse(url).path.split('/')[-1]
-                img_filepath = self.input_dir + os.path.sep + img_filename
-                urlretrieve(url, img_filepath)
-                with dl_size_lock:
-                    self.dl_size += os.path.getsize(img_filepath)
+    async def download_image_coro(self, session, url):
+        img_filename = urlparse(url).path.split('/')[-1]
+        img_filepath = self.input_dir + os.path.sep + img_filename
 
-                self.img_queue.put(img_filename)
+        async with session.get(url) as response:
+            async with aiofiles.open(img_filepath, mode='wb') as f:
+                content = await response.content.read()
+                await f.write(content)
 
-                dl_queue.task_done()
-            except Queue.Empty:
-                logging.info('Queue empty')
+        self.dl_size += os.path.getsize(img_filepath)
+        self.img_queue.put(img_filename)
+
+    async def download_images_coro(self, img_url_list):
+        async with aiohttp.ClientSession() as session:
+            for url in img_url_list:
+                await self.download_image_coro(session, url)
 
     def download_images(self, img_url_list):
         # validate inputs
@@ -47,16 +50,15 @@ class ThumbnailMakerService(object):
         os.makedirs(self.input_dir, exist_ok=True)
 
         logging.info("beginning image downloads")
-
         start = time.perf_counter()
-        for url in img_url_list:
-            # download each image and save to the input dir
-            img_filename = urlparse(url).path.split('/')[-1]
-            urlretrieve(url, self.input_dir + os.path.sep + img_filename)
-            self.img_queue.put(img_filename)
-        end = time.perf_counter()
 
-        self.img_queue.put(None)
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(self.download_images_coro(img_url_list))
+        finally:
+            loop.close()
+
+        end = time.perf_counter()
         logging.info("downloaded {} images in {} seconds".format(len(img_url_list), end - start))
 
     def perform_resizing(self):
@@ -99,23 +101,13 @@ class ThumbnailMakerService(object):
         logging.info("START make_thumbnails")
         start = time.perf_counter()
 
-        dl_queue = Queue()
-        dl_size_lock = Lock()
-
-        for img_url in img_url_list:
-            dl_queue.put(img_url)
-
-        num_dl_threads = 4
-        for _ in range(num_dl_threads):
-            t = Thread(target=self.download_image, args=(dl_queue, dl_size_lock))
-            t.start()
-
         num_processes = multiprocessing.cpu_count()
         for _ in range(num_processes):
             p = multiprocessing.Process(target=self.perform_resizing)
             p.start()
 
-        dl_queue.join()
+        self.download_images(img_url_list)
+
         for _ in range(num_processes):
             self.img_queue.put(None)
 

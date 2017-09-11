@@ -1,2 +1,4 @@
 Pillow
 pytest
+aiohttp
+aiofiles
