@@ -7,7 +7,9 @@ from urllib.request import urlretrieve
 
 import PIL
 from PIL import Image
-
+# the below 2 lines are necessary to remove any handlers. If you don't see loglines in your log file, try adding these 2 line
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
 logging.basicConfig(filename='logfile.log', level=logging.DEBUG)
 
 class ThumbnailMakerService(object):
